@@ -1,313 +1,284 @@
 """
-Student Agent Implementation for River and Stones Game
+StudentAgent - Strong bot for River and Stones.
 
-This file contains the essential utilities and template for implementing your AI agent.
-Your task is to complete the StudentAgent class with intelligent move selection.
+This module is what `agent.py` imports:
 
-Game Rules:
-- Goal: Get 4 of your stones into the opponent's scoring area
-- Pieces can be stones or rivers (horizontal/vertical orientation)  
-- Actions: move, push, flip (stone↔river), rotate (river orientation)
-- Rivers enable flow-based movement across the board
+    from student_agent import StudentAgent
 
-Your Task:
-Implement the choose() method in the StudentAgent class to select optimal moves.
-You may add any helper methods and modify the evaluation function as needed.
+Constraints:
+- No dependency on agent.py or gameEngine.py.
+- Logic built on our own core engine:
+    - core.move.Move
+    - core.state.GameState
+    - core.movegen.MoveGenerator
+    - core.eval.BoardEvaluator
+    - core.search.MinimaxEngine
+    - core.timing.TimeManager, TimeMode
 """
 
+from __future__ import annotations
+
 import random
-import copy
-from typing import List, Dict, Any, Optional, Tuple
-from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Optional, Tuple
 
-# ==================== GAME UTILITIES ====================
-# Essential utility functions for game state analysis
+from core.move import Move
+from core.state import GameState
+from core.movegen import MoveGenerator
+from core.eval import BoardEvaluator
+from core.search import MinimaxEngine
+from core.timing import TimeManager, TimeMode
 
-def in_bounds(x: int, y: int, rows: int, cols: int) -> bool:
-    """Check if coordinates are within board boundaries."""
-    return 0 <= x < cols and 0 <= y < rows
 
-def score_cols_for(cols: int) -> List[int]:
-    """Get the column indices for scoring areas."""
-    w = 4
-    start = max(0, (cols - w) // 2)
-    return list(range(start, start + w))
 
-def top_score_row() -> int:
-    """Get the row index for Circle's scoring area."""
-    return 2
-
-def bottom_score_row(rows: int) -> int:
-    """Get the row index for Square's scoring area."""
-    return rows - 3
-
-def is_opponent_score_cell(x: int, y: int, player: str, rows: int, cols: int, score_cols: List[int]) -> bool:
-    """Check if a cell is in the opponent's scoring area."""
-    if player == "circle":
-        return (y == bottom_score_row(rows)) and (x in score_cols)
-    else:
-        return (y == top_score_row()) and (x in score_cols)
-
-def is_own_score_cell(x: int, y: int, player: str, rows: int, cols: int, score_cols: List[int]) -> bool:
-    """Check if a cell is in the player's own scoring area."""
-    if player == "circle":
-        return (y == top_score_row()) and (x in score_cols)
-    else:
-        return (y == bottom_score_row(rows)) and (x in score_cols)
-
-def get_opponent(player: str) -> str:
-    """Get the opponent player identifier."""
-    return "square" if player == "circle" else "circle"
-
-# ==================== MOVE GENERATION HELPERS ====================
-
-def get_valid_moves_for_piece(board, x: int, y: int, player: str, rows: int, cols: int, score_cols: List[int]) -> List[Dict[str, Any]]:
+class StudentAgent:
     """
-    Generate all valid moves for a specific piece.
-    
-    Args:
-        board: Current board state
-        x, y: Piece position
-        player: Current player
-        rows, cols: Board dimensions
-        score_cols: Scoring column indices
-    
-    Returns:
-        List of valid move dictionaries
-    """
-    moves = []
-    piece = board[y][x]
-    
-    if piece is None or piece.owner != player:
-        return moves
-    
-    directions = [(1, 0), (-1, 0), (0, 1), (0, -1)]
-    
-    if piece.side == "stone":
-        # Stone movement
-        for dx, dy in directions:
-            nx, ny = x + dx, y + dy
-            if not in_bounds(nx, ny, rows, cols):
-                continue
-            
-            if is_opponent_score_cell(nx, ny, player, rows, cols, score_cols):
-                continue
-            
-            if board[ny][nx] is None:
-                # Simple move
-                moves.append({"action": "move", "from": [x, y], "to": [nx, ny]})
-            elif board[ny][nx].owner != player:
-                # Push move
-                px, py = nx + dx, ny + dy
-                if (in_bounds(px, py, rows, cols) and 
-                    board[py][px] is None and 
-                    not is_opponent_score_cell(px, py, player, rows, cols, score_cols)):
-                    moves.append({"action": "push", "from": [x, y], "to": [nx, ny], "pushed_to": [px, py]})
-        
-        # Stone to river flips
-        for orientation in ["horizontal", "vertical"]:
-            moves.append({"action": "flip", "from": [x, y], "orientation": orientation})
-    
-    else:  # River piece
-        # River to stone flip
-        moves.append({"action": "flip", "from": [x, y]})
-        
-        # River rotation
-        moves.append({"action": "rotate", "from": [x, y]})
-    
-    return moves
+    Tournament bot implementation.
 
-def generate_all_moves(board: List[List[Any]], player: str, rows: int, cols: int, score_cols: List[int]) -> List[Dict[str, Any]]:
-    """
-    Generate all legal moves for the current player.
-    
-    Args:
-        board: Current board state
-        player: Current player ("circle" or "square")
-        rows, cols: Board dimensions
-        score_cols: Scoring column indices
-    
-    Returns:
-        List of all valid move dictionaries
-    """
-    all_moves = []
-    
-    for y in range(rows):
-        for x in range(cols):
-            piece = board[y][x]
-            if piece and piece.owner == player:
-                piece_moves = get_valid_moves_for_piece(board, x, y, player, rows, cols, score_cols)
-                all_moves.extend(piece_moves)
-    
-    return all_moves
+    Interface expected by agent.py:
+        StudentAgent(player: str)
+        choose(board, rows, cols, score_cols, current_player_time, opponent_time) -> move_dict
 
-# ==================== BOARD EVALUATION ====================
+    Design:
+    - Converts external board objects -> compact GameState.
+    - Generates moves with MoveGenerator.
+    - Scores positions with BoardEvaluator.
+    - Searches with MinimaxEngine (negamax + alpha-beta).
+    - Adapts depth/strategy based on remaining time via TimeManager.
+    - Avoids moving stones out of scoring cells (safe-move filter).
+    """
 
-def count_stones_in_scoring_area(board: List[List[Any]], player: str, rows: int, cols: int, score_cols: List[int]) -> int:
-    """Count how many stones a player has in their scoring area."""
-    count = 0
-    
-    if player == "circle":
-        score_row = top_score_row()
-    else:
-        score_row = bottom_score_row(rows)
-    
-    for x in score_cols:
-        if in_bounds(x, score_row, rows, cols):
-            piece = board[score_row][x]
-            if piece and piece.owner == player and piece.side == "stone":
-                count += 1
-    
-    return count
-
-def basic_evaluate_board(board: List[List[Any]], player: str, rows: int, cols: int, score_cols: List[int]) -> float:
-    """
-    Basic board evaluation function.
-    
-    Returns a score where higher values are better for the given player.
-    Students can use this as a starting point and improve it.
-    """
-    score = 0.0
-    opponent = get_opponent(player)
-    
-    # Count stones in scoring areas
-    player_scoring_stones = count_stones_in_scoring_area(board, player, rows, cols, score_cols)
-    opponent_scoring_stones = count_stones_in_scoring_area(board, opponent, rows, cols, score_cols)
-    
-    score += player_scoring_stones * 100  
-    score -= opponent_scoring_stones * 100  
-    
-    # Count total pieces and positional factors
-    for y in range(rows):
-        for x in range(cols):
-            piece = board[y][x]
-            if piece and piece.owner == player and piece.side == "stone":
-                # Basic positional scoring
-                if player == "circle":
-                    score += (rows - y) * 0.1
-                else:
-                    score += y * 0.1
-    
-    return score
-
-def simulate_move(board: List[List[Any]], move: Dict[str, Any], player: str, rows: int, cols: int, score_cols: List[int]) -> Tuple[bool, Any]:
-    """
-    Simulate a move on a copy of the board.
-    
-    Args:
-        board: Current board state
-        move: Move to simulate
-        player: Player making the move
-        rows, cols: Board dimensions
-        score_cols: Scoring column indices
-    
-    Returns:
-        (success: bool, new_board_state or error_message)
-    """
-    # Import the game engine's move validation function
-    try:
-        from gameEngine import validate_and_apply_move
-        board_copy = copy.deepcopy(board)
-        success, message = validate_and_apply_move(board_copy, move, player, rows, cols, score_cols)
-        return success, board_copy if success else message
-    except ImportError:
-        # Fallback to basic simulation if game engine not available
-        return True, copy.deepcopy(board)
-
-# ==================== BASE AGENT CLASS ====================
-
-class BaseAgent(ABC):
-    """
-    Abstract base class for all agents.
-    """
-    
     def __init__(self, player: str):
-        """Initialize agent with player identifier."""
-        self.player = player
-        self.opponent = get_opponent(player)
-    
-    @abstractmethod
-    def choose(self, board: List[List[Any]], rows: int, cols: int, score_cols: List[int], current_player_time: float, opponent_time: float) -> Optional[Dict[str, Any]]:
-        """
-        Choose the best move for the current board state.
-        
-        Args:
-            board: 2D list representing the game board
-            rows, cols: Board dimensions
-            score_cols: List of column indices for scoring areas
-        
-        Returns:
-            Dictionary representing the chosen move, or None if no moves available
-        """
-        pass
+        if player not in ("circle", "square"):
+            raise ValueError(f"Invalid player: {player}")
+        self.player: str = player
+        self.opponent: str = "square" if player == "circle" else "circle"
 
-# ==================== STUDENT AGENT IMPLEMENTATION ====================
+        # Core engine components
+        self.moveGen = MoveGenerator()
+        self.evaluator = BoardEvaluator(self.moveGen)
+        self.search = MinimaxEngine(self.evaluator, self.moveGen)
+        self.timer = TimeManager()
 
-class StudentAgent(BaseAgent):
-    """
-    Student Agent Implementation
-    
-    TODO: Implement your AI agent for the River and Stones game.
-    The goal is to get 4 of your stones into the opponent's scoring area.
-    
-    You have access to these utility functions:
-    - generate_all_moves(): Get all legal moves for current player
-    - basic_evaluate_board(): Basic position evaluation 
-    - simulate_move(): Test moves on board copy
-    - count_stones_in_scoring_area(): Count stones in scoring positions
-    """
-    
-    def __init__(self, player: str):
-        super().__init__(player)
-        # TODO: Add any initialization you need
-    
-    def choose(self, board: List[List[Any]], rows: int, cols: int, score_cols: List[int], current_player_time: float, opponent_time: float) -> Optional[Dict[str, Any]]:
+        # Defense mode heuristic: mirror C++ logic
+        # Circle tends to play offensive, Square more defensive.
+        self.evaluator.setDefenseMode(player == "square")
+
+        # Reusable GameState; recreated each choose() based on actual rows/cols.
+        self._game_state: Optional[GameState] = None
+
+    # ==========================================================
+    # Public API (called by agent.py)
+    # ==========================================================
+
+    def choose(
+        self,
+        board: List[List[Any]],
+        rows: int,
+        cols: int,
+        score_cols: List[int],
+        current_player_time: float,
+        opponent_time: float,
+    ) -> Optional[Dict[str, Any]]:
         """
-        Choose the best move for the current board state.
-        
+        Select a move for the current state.
+
         Args:
-            board: 2D list representing the game board
-            rows, cols: Board dimensions  
-            score_cols: Column indices for scoring areas
-            
+            board: 2D list of piece-like objects:
+                   - None for empty
+                   - or object/dict with fields: owner, side, orientation
+            rows, cols: board dimensions
+            score_cols: scoring columns (provided by framework)
+            current_player_time: remaining time for *this* player (seconds)
+            opponent_time: remaining time for opponent (unused here, but available)
+
         Returns:
-            Dictionary representing your chosen move
+            A move dict in the format expected by agent.py/gameEngine:
+              {
+                "action": "move" | "push" | "flip" | "rotate",
+                "from": [x, y],
+                "to": [nx, ny],            # for move/push
+                "pushed_to": [px, py],     # for push
+                "orientation": "horizontal"|"vertical"  # for flip stone->river
+              }
+            or None if no legal moves exist.
         """
-        moves = generate_all_moves(board, self.player, rows, cols, score_cols)
-        
-        if not moves:
+
+        if rows <= 0 or cols <= 0:
             return None
-        
-        # TODO: Replace random selection with your AI algorithm
+
+        # Build internal GameState from external board
+        gs = GameState(rows, cols)
+        gs.load_from_python(self._normalize_board(board))
+        self._game_state = gs
+
+        # Start timing for this move
+        self.timer.start_timer(float(max(0.01, current_player_time)))
+
+        # Generate all legal moves for our side
+        all_moves: List[Move] = self.moveGen.generate_all_moves_optimized(gs, self.player)
+        if not all_moves:
+            # No legal moves: return a harmless pass-like move
+            return None
+
+        # Filter out moves that pull stones out of scoring area
+        safe_moves = self._filter_safe_moves(all_moves, gs)
+
+        # Decide search regime from time mode
+        mode = self.timer.get_time_mode()
+
+        try:
+            if mode is TimeMode.PANIC:
+                # Ultra low time: fast random among safe moves
+                chosen = self._select_random_move(safe_moves)
+
+            elif mode is TimeMode.EVAL:
+                # Low time: 0-ply: evaluate each safe move, pick best
+                chosen = self._select_best_by_eval(safe_moves, gs)
+
+            elif mode is TimeMode.PLY_ONE:
+                # Medium low: depth-1 search
+                chosen = self.search.getBestMove(gs, self.player, maxDepth=1)
+
+            else:
+                # Good time: depth-2 search (tunable)
+                chosen = self.search.getBestMove(gs, self.player, maxDepth=2)
+
+            # Safety: ensure chosen is legal; otherwise fallback
+            if chosen not in all_moves:
+                chosen = safe_moves[0] if safe_moves else all_moves[0]
+
+        except Exception:
+            # On any unexpected issue, fall back to a simple safe random move
+            chosen = self._select_random_move(safe_moves or all_moves)
+
+        return self._move_to_dict(chosen)
+
+    # ==========================================================
+    # Internal helpers
+    # ==========================================================
+
+    def _normalize_board(
+        self,
+        board: List[List[Any]],
+    ) -> List[List[Dict[str, str]]]:
+        """
+        Convert external board representation into the format
+        expected by GameState.load_from_python:
+
+            cell = {}                               # empty
+            cell = {
+                "owner": "circle"/"square",
+                "side": "stone"/"river",
+                "orientation": "horizontal"/"vertical"
+            }
+
+        Accepts:
+        - None for empty
+        - dict with the above keys
+        - object with attributes .owner, .side, .orientation
+        """
+        rows = len(board)
+        cols = len(board[0]) if rows > 0 else 0
+
+        norm: List[List[Dict[str, str]]] = [[{} for _ in range(cols)] for _ in range(rows)]
+
+        for y in range(rows):
+            row = board[y]
+            for x in range(cols):
+                cell = row[x]
+                if not cell:
+                    continue
+
+                if isinstance(cell, dict):
+                    owner = cell.get("owner")
+                    side = cell.get("side")
+                    if not owner or not side:
+                        continue
+                    ori = cell.get("orientation", "horizontal")
+                else:
+                    # Treat as engine piece object
+                    owner = getattr(cell, "owner", None)
+                    side = getattr(cell, "side", None)
+                    if not owner or not side:
+                        continue
+                    ori = getattr(cell, "orientation", "horizontal")
+
+                norm[y][x] = {
+                    "owner": owner,
+                    "side": side,
+                    "orientation": ori,
+                }
+
+        return norm
+
+    def _filter_safe_moves(self, moves: List[Move], gs: GameState) -> List[Move]:
+        """
+        Equivalent to C++ filterToSafeMoves:
+        - If a stone is already in our scoring row and scoring column, avoid moving it out.
+        """
+        score_cols = gs.getScoreCols()
+        is_circle = (self.player == "circle")
+        scoring_row = 2 if is_circle else (gs.getRows() - 3)
+
+        safe: List[Move] = []
+        for mv in moves:
+            ok = True
+            if mv.action == "move":
+                fx, fy = mv.from_pos
+                if fy == scoring_row and fx in score_cols:
+                    # This piece is scoring; don't walk it out
+                    ok = False
+            if ok:
+                safe.append(mv)
+
+        return safe if safe else moves
+
+    def _select_best_by_eval(self, moves: List[Move], gs: GameState) -> Move:
+        """
+        0-ply evaluation over candidate moves (no recursion).
+        """
+        if not moves:
+            return self._select_random_move(moves)
+
+        if len(moves) == 1:
+            return moves[0]
+
+        is_circle = (self.player == "circle")
+        best = moves[0]
+        best_score = float("-inf")
+
+        for mv in moves:
+            ui = gs.applyMove(mv)
+            score = self.evaluator.EvaluateBoard(gs, is_circle)
+            gs.undoMove(ui)
+
+            if score > best_score:
+                best_score = score
+                best = mv
+
+        return best
+
+    def _select_random_move(self, moves: List[Move]) -> Move:
+        if not moves:
+            # Dummy; should not normally hit if caller checks
+            return Move("move", (0, 0), (0, 0))
         return random.choice(moves)
 
-# ==================== TESTING HELPERS ====================
+    def _move_to_dict(self, mv: Move) -> Dict[str, Any]:
+        """
+        Convert internal Move -> dict format expected by framework.
+        Adjust this if your Move dataclass uses different field names.
+        """
+        data: Dict[str, Any] = {
+            "action": mv.action,
+            "from": [mv.from_pos[0], mv.from_pos[1]],
+            "to": [mv.to_pos[0], mv.to_pos[1]],
+        }
 
-def test_student_agent():
-    """
-    Basic test to verify the student agent can be created and make moves.
-    """
-    print("Testing StudentAgent...")
-    
-    try:
-        from gameEngine import default_start_board, DEFAULT_ROWS, DEFAULT_COLS
-        
-        rows, cols = DEFAULT_ROWS, DEFAULT_COLS
-        score_cols = score_cols_for(cols)
-        board = default_start_board(rows, cols)
-        
-        agent = StudentAgent("circle")
-        move = agent.choose(board, rows, cols, score_cols,1.0,1.0)
-        
-        if move:
-            print("✓ Agent successfully generated a move")
-        else:
-            print("✗ Agent returned no move")
-    
-    except ImportError:
-        agent = StudentAgent("circle")
-        print("✓ StudentAgent created successfully")
+        if getattr(mv, "pushed_to", None):
+            data["pushed_to"] = [mv.pushed_to[0], mv.pushed_to[1]]
 
-if __name__ == "__main__":
-    # Run basic test when file is executed directly
-    test_student_agent()
+        if getattr(mv, "orientation", ""):
+            data["orientation"] = mv.orientation
+
+        return data
