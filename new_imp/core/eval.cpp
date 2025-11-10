@@ -27,13 +27,13 @@ void BoardEvaluator::setDefenseMode(bool mode) {
 void BoardEvaluator::initializeScoringAreas(const GameState& gameState) const {
     if (scoring_areas_initialized) return;
 
-    int rows = gameState.getRows();
+    // int rows = gameState.getRows();
     const std::vector<int>& score_cols = gameState.getScoreCols();
 
-    circle_scoring.row = 2;
+    circle_scoring.row = gameState.getTopScoreRow();
     circle_scoring.score_cols = score_cols;
 
-    square_scoring.row = rows - 3;
+    square_scoring.row = gameState.getBottomScoreRow();
     square_scoring.score_cols = score_cols;
 
     scoring_areas_initialized = true;
@@ -205,9 +205,9 @@ float BoardEvaluator::evaluateBoardAdvancement(const GameState& gameState, bool 
     float advancement_score = 0.0f;
     const auto& player_positions = gameState.getPlayerPiecePositions(isCirclePlayer);
     const auto& score_cols = gameState.getScoreCols();
+    // Circle scores at row 2, Square at row (rows-3)
+    int target_scoring_row = isCirclePlayer ? gameState.getTopScoreRow() : gameState.getBottomScoreRow();  
     
-    int rows = gameState.getRows();
-    int target_scoring_row = isCirclePlayer ? 2 : (rows - 3);  // Circle scores at row 2, Square at row (rows-3)
     
     // Count pieces in each Manhattan distance ring
     int pieces_in_ring[5] = {0, 0, 0, 0, 0};  // rings 0, 1, 2, 3, 4+
@@ -356,7 +356,7 @@ float BoardEvaluator::countReachableOpponentPositionsWithCache(const GameState& 
     
     // Get our goal zone info for distance calculation
     const auto& score_cols = gameState.getScoreCols();
-    int our_goal_row = isCirclePlayer ? 2 : (gameState.getRows() - 3);
+    int our_goal_row = isCirclePlayer ? gameState.getTopScoreRow() : gameState.getBottomScoreRow();
     
     // OPTIMIZED: Use cached simulation instead of direct call
     std::vector<std::pair<int,int>> destinations = getCachedRiverSimulation(
@@ -390,7 +390,7 @@ float BoardEvaluator::countReachableScoringPositionsWithCache(const GameState& g
                                             std::vector<RiverSimulationCacheEntry>& cache) const { 
     float weighted_score = 0.0f;  // Changed from int scoring_reach = 0
     const auto& score_cols = gameState.getScoreCols();
-    int target_scoring_row = isCirclePlayer ? 2 : (gameState.getRows() - 3);
+    int target_scoring_row = isCirclePlayer ? gameState.getTopScoreRow() : gameState.getBottomScoreRow();
     
     // OPTIMIZED: Use cached simulation instead of direct call
     std::vector<std::pair<int,int>> destinations = getCachedRiverSimulation(

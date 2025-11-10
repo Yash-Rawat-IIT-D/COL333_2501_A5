@@ -116,7 +116,7 @@ public:
           moveGen(),
           evaluator(&moveGen),
           searchEngine(0),
-          gameState(5, 5) {
+          gameState(13, 12) {
 
         searchEngine = new MinimaxEngine(&evaluator, &moveGen);
         evaluator.setMoveGenerator(&moveGen);

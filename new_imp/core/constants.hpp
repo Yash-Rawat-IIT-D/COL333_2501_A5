@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <string>
+#include <cstddef>
+#include <vector>
 
 /*
  * ==================== GLOBAL CONSTANTS ====================
@@ -43,3 +45,27 @@ inline bool is_HorizontalOrientation(const std::string& orientation) {
 inline bool is_VerticalOrientation(const std::string& orientation) {
     return orientation == ORIENT_VERTICAL;
 }
+
+// ==================== BOARD SIZE ====================
+
+enum BoardSize {
+    BOARD_SMALL,
+    BOARD_MEDIUM,
+    BOARD_LARGE,
+    BOARD_UNKNOWN
+};
+
+// Detect board size from dimensions (per A5 spec: 13x12, 15x14, 17x16 or similar)
+BoardSize detectBoardSize(int rows, int cols);
+
+// Get win count for a given board size:
+//  SMALL  -> 4 //  MEDIUM -> 5 //  LARGE  -> 6
+int getBoardWinCount(BoardSize size);
+
+// Get scoring band width (number of scoring columns) for a board size:
+//  SMALL  -> 4 //  MEDIUM -> 5 //  LARGE  -> 6
+int getScoreColsWidth(BoardSize size);
+
+// Compute centered scoring columns for a given board size + column count.
+// For UNKNOWN, this should fall back safely (e.g., 4-wide centered band).
+std::vector<int> makeScoreCols(BoardSize size, int cols);

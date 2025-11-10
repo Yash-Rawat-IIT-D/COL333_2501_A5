@@ -28,16 +28,18 @@ private:
     mutable std::vector<std::pair<int,int> > circle_piece_positions;
     mutable std::vector<std::pair<int,int> > square_piece_positions;
 
-    // Game constants
-    static const int WIN_COUNT = 4;
-    static const int TOP_SCORE_ROW = 2;
-
-    int getBottomScoreRow() const;
+    // New: cached board meta
+    BoardSize board_size;
+    int top_score_row;
+    int bottom_score_row;
+    int win_count;
 
     // Internal helpers
     void addPiecePosition(int x, int y, std::uint8_t piece);
     void removePiecePosition(int x, int y, std::uint8_t piece);
     void initializePositionTracking();
+
+
 
 public:
     // Constructor
@@ -72,6 +74,10 @@ public:
     int getRows() const { return rows; }
     int getCols() const { return cols; }
     const std::vector<int>& getScoreCols() const { return score_cols; }
+
+    int getTopScoreRow() const { return top_score_row; }
+    int getBottomScoreRow() const { return bottom_score_row; }
+    int getWinCount() const { return win_count; }
 
     // Position access
     const std::vector<std::pair<int,int> >& getCirclePiecePositions() const {

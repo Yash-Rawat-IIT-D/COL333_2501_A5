@@ -1,10 +1,8 @@
 #include "state.hpp"
+#include "constants.hpp"
+#include "piece.hpp"
 
 // ==================== INTERNAL HELPERS ====================
-
-int GameState::getBottomScoreRow() const {
-    return rows - 3;
-}
 
 void GameState::addPiecePosition(int x, int y, std::uint8_t piece) {
     if (piece == EMPTY) return;
@@ -54,15 +52,21 @@ void GameState::initializePositionTracking() {
 // ==================== CTORS / ASSIGNMENT ====================
 
 GameState::GameState(int r, int c)
-    : rows(r), cols(c) {
+    : rows(r),
+      cols(c),
+      board_size(BOARD_UNKNOWN),
+      top_score_row(2),          // fixed by spec
+      bottom_score_row(r - 3),   // fixed by spec
+      win_count(4)               // default; updated below
+{
     board.assign(rows, std::vector<std::uint8_t>(cols, EMPTY));
 
-    // score_cols from gameEngine.py: centered width-4 band
-    const int w = 4;
-    const int start = std::max(0, (cols - w) / 2);
-    for (int i = start; i < start + w; ++i) {
-        score_cols.push_back(i);
-    }
+    // Determine board profile
+    board_size = detectBoardSize(rows, cols);
+    win_count = getBoardWinCount(board_size);
+
+    // Build scoring columns using central band from constants
+    score_cols = makeScoreCols(board_size, cols);
 
     initializePositionTracking();
 }
@@ -73,20 +77,31 @@ GameState::GameState(const GameState& other)
       cols(other.cols),
       score_cols(other.score_cols),
       circle_piece_positions(other.circle_piece_positions),
-      square_piece_positions(other.square_piece_positions) {}
+      square_piece_positions(other.square_piece_positions),
+      board_size(other.board_size),
+      top_score_row(other.top_score_row),
+      bottom_score_row(other.bottom_score_row),
+      win_count(other.win_count)
+{
+}
 
 GameState& GameState::operator=(const GameState& other) {
     if (this != &other) {
         board = other.board;
         rows = other.rows;
         cols = other.cols;
+
         score_cols = other.score_cols;
         circle_piece_positions = other.circle_piece_positions;
         square_piece_positions = other.square_piece_positions;
+
+        board_size = other.board_size;
+        top_score_row = other.top_score_row;
+        bottom_score_row = other.bottom_score_row;
+        win_count = other.win_count;
     }
     return *this;
 }
-
 // ==================== LOADING / ACCESS ====================
 
 void GameState::loadFromPython(
@@ -139,10 +154,10 @@ bool GameState::isOpponentScoreCell(int x, int y, bool isCirclePlayer) const {
 
     if (isCirclePlayer) {
         // Circle scores at bottom row
-        return y == getBottomScoreRow();
+        return y == bottom_score_row;
     } else {
         // Square scores at top row
-        return y == TOP_SCORE_ROW;
+        return y == top_score_row;
     }
 }
 
@@ -160,8 +175,8 @@ std::string GameState::getWinner() const {
     // Circle's scoring area (top)
     for (std::size_t i = 0; i < score_cols.size(); ++i) {
         int x = score_cols[i];
-        if (inBounds(x, TOP_SCORE_ROW)) {
-            std::uint8_t piece = board[TOP_SCORE_ROW][x];
+        if (inBounds(x, top_score_row)) {
+            std::uint8_t piece = board[top_score_row][x];
             if (piece == CIRCLE_STONE) {
                 ++circle_count;
             }
@@ -169,7 +184,7 @@ std::string GameState::getWinner() const {
     }
 
     // Square's scoring area (bottom)
-    const int bot_row = getBottomScoreRow();
+    const int bot_row = bottom_score_row;
     for (std::size_t i = 0; i < score_cols.size(); ++i) {
         int x = score_cols[i];
         if (inBounds(x, bot_row)) {
@@ -180,14 +195,14 @@ std::string GameState::getWinner() const {
         }
     }
 
-    if (circle_count >= WIN_COUNT) return PLAYER_CIRCLE;
-    if (square_count >= WIN_COUNT) return PLAYER_SQUARE;
+    if (circle_count >= win_count) return PLAYER_CIRCLE;
+    if (square_count >= win_count) return PLAYER_SQUARE;
     return std::string();
 }
 
 int GameState::countScoringPieces(bool isCirclePlayer) const {
     int count = 0;
-    const int target_row = isCirclePlayer ? TOP_SCORE_ROW : getBottomScoreRow();
+    const int target_row = isCirclePlayer ? top_score_row : bottom_score_row;
     const std::uint8_t target_piece =
         isCirclePlayer ? CIRCLE_STONE : SQUARE_STONE;
 
